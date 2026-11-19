@@ -50,6 +50,7 @@
   <Folder Name="/build/Projects/">
     <File Path="build/Projects/Component.proj" />
     <File Path="build/Projects/OpenTelemetry.Contrib.Shared.Tests.proj" />
+    <File Path="build/Projects/OpenTelemetry.Exporter.AzureDataExplorer.proj" />
     <File Path="build/Projects/OpenTelemetry.Exporter.InfluxDB.proj" />
     <File Path="build/Projects/OpenTelemetry.Extensions.Enrichment.proj" />
     <File Path="build/Projects/OpenTelemetry.Instrumentation.AspNet.proj" />
@@ -134,6 +135,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/OpenTelemetry.DynamicControl/OpenTelemetry.DynamicControl.csproj" />
+    <Project Path="src/OpenTelemetry.Exporter.AzureDataExplorer/OpenTelemetry.Exporter.AzureDataExplorer.csproj" />
     <Project Path="src/OpenTelemetry.Exporter.Geneva/OpenTelemetry.Exporter.Geneva.csproj" />
     <Project Path="src/OpenTelemetry.Exporter.InfluxDB/OpenTelemetry.Exporter.InfluxDB.csproj" />
     <Project Path="src/OpenTelemetry.Exporter.OneCollector/OpenTelemetry.Exporter.OneCollector.csproj" />
@@ -252,6 +254,7 @@
     <Project Path="test/OpenTelemetry.Contrib.Shared.Tests/OpenTelemetry.Contrib.Shared.Tests.csproj" />
     <Project Path="test/OpenTelemetry.DynamicControl.FuzzTests/OpenTelemetry.DynamicControl.FuzzTests.csproj" />
     <Project Path="test/OpenTelemetry.DynamicControl.Tests/OpenTelemetry.DynamicControl.Tests.csproj" />
+    <Project Path="test/OpenTelemetry.Exporter.AzureDataExplorer.Tests/OpenTelemetry.Exporter.AzureDataExplorer.Tests.csproj" />
     <Project Path="test/OpenTelemetry.Exporter.Geneva.Benchmarks/OpenTelemetry.Exporter.Geneva.Benchmarks.csproj" />
     <Project Path="test/OpenTelemetry.Exporter.Geneva.FuzzTests/OpenTelemetry.Exporter.Geneva.FuzzTests.csproj" />
     <Project Path="test/OpenTelemetry.Exporter.Geneva.Stress/OpenTelemetry.Exporter.Geneva.Stress.csproj" />

@@ -1,0 +1,31 @@
+<Project>
+
+  <PropertyGroup>
+    <RepoRoot>$([System.IO.Directory]::GetParent($(MSBuildThisFileDirectory)).Parent.Parent.FullName)</RepoRoot>
+    <MinVerTagPrefix>Exporter.AzureDataExplorer-</MinVerTagPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SolutionProjects Include="$(RepoRoot)\src\OpenTelemetry.Exporter.AzureDataExplorer\OpenTelemetry.Exporter.AzureDataExplorer.csproj" />
+    <SolutionProjects Include="$(RepoRoot)\test\OpenTelemetry.Exporter.AzureDataExplorer.Tests\OpenTelemetry.Exporter.AzureDataExplorer.Tests.csproj" />
+
+    <PackProjects Include="$(RepoRoot)\src\OpenTelemetry.Exporter.AzureDataExplorer\OpenTelemetry.Exporter.AzureDataExplorer.csproj" />
+
+    <TestProjects Include="$(RepoRoot)\test\OpenTelemetry.Exporter.AzureDataExplorer.Tests\OpenTelemetry.Exporter.AzureDataExplorer.Tests.csproj" />
+  </ItemGroup>
+
+  <Target Name="Build">
+    <MSBuild Projects="@(SolutionProjects)" Targets="Build" ContinueOnError="ErrorAndStop" />
+  </Target>
+
+  <Target Name="Restore">
+    <MSBuild Projects="@(SolutionProjects)" Targets="Restore" ContinueOnError="ErrorAndStop" />
+  </Target>
+
+  <Target Name="Pack">
+    <MSBuild Projects="@(PackProjects)" Targets="Pack" ContinueOnError="ErrorAndStop" />
+  </Target>
+
+  <Import Project="$(RepoRoot)/build/Tests.targets" />
+
+</Project>

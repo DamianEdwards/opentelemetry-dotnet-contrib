@@ -61,3 +61,9 @@ dotnet test test/OpenTelemetry.Exporter.AzureDataExplorer.Tests --filter "Catego
 Queued ingestion is batched by the service according to the table's
 ingestion batching policy, so these tests can take several minutes. Each run
 writes rows tagged with a unique `service.name` and does not delete them.
+On a dedicated test database you can shorten the batching window to reduce
+the wait:
+
+```kql
+.alter database <db> policy ingestionbatching '{"MaximumBatchingTimeSpan":"00:00:10","MaximumNumberOfItems":500,"MaximumRawDataSizeMB":1024}'
+```

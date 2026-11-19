@@ -172,4 +172,25 @@ public class AzureDataExplorerExporterOptionsTests
         Assert.Equal(IngestionMappingKind.Json, withMapping.IngestionMapping.IngestionMappingKind);
         Assert.Equal("my_mapping", withMapping.IngestionMapping.IngestionMappingReference);
     }
+
+    [Fact]
+    public void SourceStream_CanBeDisposedWithoutDisposingExporterBuffer()
+    {
+        using var buffer = new MemoryStream();
+        var payload = System.Text.Encoding.UTF8.GetBytes("{\"a\":1}\n");
+        buffer.Write(payload, 0, payload.Length);
+        buffer.Position = 0;
+
+        using (var source = KustoIngestor.CreateSourceStream(buffer))
+        {
+            using var reader = new StreamReader(source);
+            Assert.Equal("{\"a\":1}\n", reader.ReadToEnd());
+        }
+
+        // The managed streaming client disposes the source stream; the exporter's buffer must survive for retries.
+        Assert.True(buffer.CanRead);
+        buffer.Position = 0;
+        using var retry = KustoIngestor.CreateSourceStream(buffer);
+        Assert.Equal(payload.Length, retry.Length);
+    }
 }

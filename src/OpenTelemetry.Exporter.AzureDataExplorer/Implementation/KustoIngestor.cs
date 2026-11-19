@@ -34,27 +34,49 @@ internal sealed class KustoIngestor : IAzureDataExplorerIngestor
         var kcsb = CreateConnectionStringBuilder(options);
         var ingestionProperties = CreateIngestionProperties(options.DatabaseName, tableName, jsonMappingReference);
 
-        // Managed streaming ingestion retries transient errors and falls back
-        // to queued ingestion, matching the Collector's managed ingestor.
-        var client = options.IngestionType == AzureDataExplorerIngestionType.Managed
-            ? KustoIngestFactory.CreateManagedStreamingIngestClient(kcsb)
-            : KustoIngestFactory.CreateQueuedIngestClient(kcsb);
-
-        return new KustoIngestor(client, ingestionProperties);
+        return new KustoIngestor(CreateClient(kcsb, options.IngestionType), ingestionProperties);
     }
 
     public async Task IngestAsync(Stream data, CancellationToken cancellationToken)
     {
+        // The managed streaming client rejects LeaveOpen and disposes the source
+        // stream, so hand each attempt its own view over the caller's buffer.
+#pragma warning disable CA2000 // Dispose objects before losing scope
+        var source = CreateSourceStream(data);
+#pragma warning restore CA2000 // Dispose objects before losing scope
+
         var sourceOptions = new StreamSourceOptions
         {
-            LeaveOpen = true,
             CompressionType = DataSourceCompressionType.None,
         };
 
-        await this.client.IngestFromStreamAsync(data, this.IngestionProperties, sourceOptions, cancellationToken).ConfigureAwait(false);
+        await this.client.IngestFromStreamAsync(source, this.IngestionProperties, sourceOptions, cancellationToken).ConfigureAwait(false);
     }
 
     public void Dispose() => this.client.Dispose();
+
+    internal static IKustoIngestClient CreateClient(KustoConnectionStringBuilder kcsb, AzureDataExplorerIngestionType ingestionType)
+    {
+        // Managed streaming ingestion retries transient errors and falls back
+        // to queued ingestion, matching the Collector's managed ingestor.
+        return ingestionType == AzureDataExplorerIngestionType.Managed
+            ? KustoIngestFactory.CreateManagedStreamingIngestClient(kcsb)
+            : KustoIngestFactory.CreateQueuedIngestClient(kcsb);
+    }
+
+    internal static Stream CreateSourceStream(Stream data)
+    {
+        if (data is MemoryStream memoryStream && memoryStream.TryGetBuffer(out var buffer))
+        {
+            var position = (int)memoryStream.Position;
+            return new MemoryStream(buffer.Array!, buffer.Offset + position, buffer.Count - position, writable: false);
+        }
+
+        var copy = new MemoryStream();
+        data.CopyTo(copy);
+        copy.Position = 0;
+        return copy;
+    }
 
     internal static KustoIngestionProperties CreateIngestionProperties(string databaseName, string tableName, string? jsonMappingReference)
     {

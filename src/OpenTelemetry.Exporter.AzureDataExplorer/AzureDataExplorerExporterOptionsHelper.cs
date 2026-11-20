@@ -1,6 +1,9 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
+#if NET
+using System.Diagnostics.CodeAnalysis;
+#endif
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -21,7 +24,11 @@ internal static class AzureDataExplorerExporterOptionsHelper
         }
     }
 
-    public static T GetOptions<T>(IServiceProvider serviceProvider, string? name)
+    public static T GetOptions<
+#if NET
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+#endif
+        T>(IServiceProvider serviceProvider, string? name)
         where T : class
     {
         var finalName = name ?? Options.DefaultName;

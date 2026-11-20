@@ -24,11 +24,11 @@ internal static class AzureDataExplorerExporterOptionsHelper
         }
     }
 
-    public static T GetOptions<
 #if NET
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+    public static T GetOptions<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(IServiceProvider serviceProvider, string? name)
+#else
+    public static T GetOptions<T>(IServiceProvider serviceProvider, string? name)
 #endif
-        T>(IServiceProvider serviceProvider, string? name)
         where T : class
     {
         var finalName = name ?? Options.DefaultName;

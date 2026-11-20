@@ -54,7 +54,11 @@ must be enabled on the cluster and the database or tables:
 ```
 
 Managed ingestion falls back to queued ingestion when streaming ingestion
-fails or the payload is too large.
+fails transiently, the payload is too large, or the table cannot accept
+streamed data (for example because of an incompatible update policy). When
+Kusto reports that streaming ingestion is not enabled for the table or the
+cluster, the exporter uses queued ingestion for that table for the next
+15 minutes before trying streaming again.
 
 ## Usage
 
@@ -131,7 +135,11 @@ Exactly one authentication method must be configured: the
 `UseAzureAuth` or `TokenCredential`.
 
 Failures that Kusto reports as permanent (for example a missing table or an
-invalid mapping) are not retried.
+invalid mapping) are not retried. Authorization failures (HTTP 401/403) on
+streaming ingestion are permanent. In queued mode, failures to fetch ingestion
+resources or the identity token are retried, since they can be transient.
+When Kusto returns HTTP 401, the exporter discards its cached access token and
+retries the request once if the credential issues a new token.
 
 ## Data mapping
 

@@ -67,6 +67,21 @@ internal sealed class KustoTokenProvider : IKustoTokenProvider
         return token.Token;
     }
 
+    public void InvalidateToken(string token)
+    {
+        lock (this.sync)
+        {
+            foreach (var entry in this.tokens)
+            {
+                if (string.Equals(entry.Value.Token, token, StringComparison.Ordinal))
+                {
+                    this.tokens.Remove(entry.Key);
+                    break;
+                }
+            }
+        }
+    }
+
     internal static KustoAuthSettings ParseAuthSettings(KustoAzureAdMetadata? metadata)
     {
         var resource = string.IsNullOrWhiteSpace(metadata?.KustoServiceResourceId)

@@ -167,6 +167,121 @@ public class KustoRestIngestorTests
     }
 
     [Fact]
+    public async Task Managed_SuspendsStreamingAfterPolicyNotEnabled()
+    {
+        using var handler = new FakeHandler(request => IsStreaming(request)
+            ? Respond(HttpStatusCode.BadRequest, """{"error":{"code":"BadRequest_StreamingIngestionPolicyNotEnabled","@permanent":true}}""")
+            : RespondToQueuedFlow(request));
+        using var ingestor = CreateIngestor(handler, AzureDataExplorerIngestionType.Managed);
+
+        await IngestAsync(ingestor, Payload);
+        await IngestAsync(ingestor, Payload);
+
+        Assert.Single(handler.Requests, IsStreaming);
+        Assert.Equal(2, handler.Requests.Count(IsQueueMessage));
+
+        using var resumingIngestor = CreateIngestor(handler, AzureDataExplorerIngestionType.Managed);
+        resumingIngestor.StreamingSuspensionPeriod = TimeSpan.Zero;
+
+        await IngestAsync(resumingIngestor, Payload);
+        await IngestAsync(resumingIngestor, Payload);
+
+        Assert.Equal(3, handler.Requests.Count(IsStreaming));
+    }
+
+    [Fact]
+    public async Task Managed_TooLargeFallbackDoesNotSuspendStreaming()
+    {
+        using var handler = new FakeHandler(request => IsStreaming(request) ? Respond(HttpStatusCode.RequestEntityTooLarge) : RespondToQueuedFlow(request));
+        using var ingestor = CreateIngestor(handler, AzureDataExplorerIngestionType.Managed);
+
+        await IngestAsync(ingestor, Payload);
+        await IngestAsync(ingestor, Payload);
+
+        Assert.Equal(2, handler.Requests.Count(IsStreaming));
+    }
+
+    [Theory]
+    [InlineData("BadRequest_StreamingIngestionPolicyNotEnabled", "Suspend")]
+    [InlineData("NotFound_StreamingIngestionDisabledForCluster", "Suspend")]
+    [InlineData("BadRequest_StreamingIngestionUpdatePolicyIncompatible", "Queue")]
+    [InlineData("UpdatePolicy_QuerySchemaDoesNotMatchTableSchema", "Queue")]
+    [InlineData("BadRequest_FileTooLarge", "Queue")]
+    [InlineData("Stream_InputStreamTooLarge", "Queue")]
+    [InlineData("BadRequest_EntityNotFound", "None")]
+    public void GetStreamingFallback_MatchesKustoSdkErrorCodes(string code, string expected)
+    {
+        var exception = KustoRestIngestor.CreateException("Streaming ingestion", HttpStatusCode.BadRequest, $$$"""{"error":{"code":"{{{code}}}","@permanent":true}}""");
+
+        Assert.Equal(code, exception.FailureSubCode);
+        Assert.Equal(expected, KustoRestIngestor.GetStreamingFallback(exception).ToString());
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task Managed_StreamingAuthorizationFailureIsPermanent(HttpStatusCode statusCode)
+    {
+        using var handler = new FakeHandler(_ => Respond(statusCode));
+        using var ingestor = CreateIngestor(handler, AzureDataExplorerIngestionType.Managed);
+
+        var exception = await Assert.ThrowsAsync<AzureDataExplorerIngestionException>(() => IngestAsync(ingestor, Payload));
+
+        Assert.True(exception.IsPermanent);
+        Assert.Equal(statusCode, exception.StatusCode);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Unauthorized_RetriesOnceWithNewToken()
+    {
+        var tokenProvider = new StaticTokenProvider { RotateOnInvalidate = true };
+        using var handler = new FakeHandler(request =>
+            request.Headers["Authorization"] == "Bearer test-token" ? Respond(HttpStatusCode.Unauthorized) : Respond(HttpStatusCode.OK));
+        using var ingestor = CreateIngestor(handler, AzureDataExplorerIngestionType.Managed, tokenProvider: tokenProvider);
+
+        await IngestAsync(ingestor, Payload);
+
+        Assert.Equal(["test-token"], tokenProvider.InvalidatedTokens);
+        Assert.Equal(["Bearer test-token", "Bearer test-token-2"], handler.Requests.Select(r => r.Headers["Authorization"]));
+        Assert.Equal(Payload, Decompress(handler.Requests[1].Body));
+    }
+
+    [Fact]
+    public async Task Unauthorized_IsNotRetriedWhenCredentialReturnsSameToken()
+    {
+        var tokenProvider = new StaticTokenProvider();
+        using var handler = new FakeHandler(_ => Respond(HttpStatusCode.Unauthorized));
+        using var ingestor = CreateIngestor(handler, AzureDataExplorerIngestionType.Managed, tokenProvider: tokenProvider);
+
+        await Assert.ThrowsAsync<AzureDataExplorerIngestionException>(() => IngestAsync(ingestor, Payload));
+
+        Assert.Equal(["test-token"], tokenProvider.InvalidatedTokens);
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.BadRequest)]
+    public async Task Queued_DataManagementFailuresAreNotPermanent(HttpStatusCode statusCode)
+    {
+        var fail = true;
+        using var handler = new FakeHandler(request =>
+            fail && request.Uri.AbsolutePath == "/v1/rest/mgmt" ? Respond(statusCode) : RespondToQueuedFlow(request));
+        using var ingestor = CreateIngestor(handler, AzureDataExplorerIngestionType.Queued);
+
+        var exception = await Assert.ThrowsAsync<AzureDataExplorerIngestionException>(() => IngestAsync(ingestor, Payload));
+        Assert.False(exception.IsPermanent);
+        Assert.Equal(statusCode, exception.StatusCode);
+        Assert.False(AzureDataExplorerIngestionException.IsPermanentError(exception));
+
+        fail = false;
+        await IngestAsync(ingestor, Payload);
+        Assert.Single(handler.Requests, IsQueueMessage);
+    }
+
+    [Fact]
     public async Task Queued_TriesNextContainerWhenUploadFails()
     {
         var uploads = 0;
@@ -313,6 +428,20 @@ public class KustoRestIngestorTests
     }
 
     [Fact]
+    public async Task TokenProvider_InvalidateTokenAcquiresNewToken()
+    {
+        using var handler = new FakeHandler(_ => Respond(HttpStatusCode.NotFound));
+        using var httpClient = new HttpClient(handler);
+        var provider = new KustoTokenProvider(httpClient, _ => new FakeCredential());
+
+        Assert.Equal("token-1", await provider.GetTokenAsync(ClusterUri, CancellationToken.None));
+        provider.InvalidateToken("other-token");
+        Assert.Equal("token-1", await provider.GetTokenAsync(ClusterUri, CancellationToken.None));
+        provider.InvalidateToken("token-1");
+        Assert.Equal("token-2", await provider.GetTokenAsync(ClusterUri, CancellationToken.None));
+    }
+
+    [Fact]
     public void TokenProvider_UsesMfaResourceWhenRequired()
     {
         var settings = KustoTokenProvider.ParseAuthSettings(new KustoAzureAdMetadata
@@ -328,13 +457,14 @@ public class KustoRestIngestorTests
         FakeHandler handler,
         AzureDataExplorerIngestionType ingestionType,
         string? mapping = null,
-        bool authenticate = true)
+        bool authenticate = true,
+        IKustoTokenProvider? tokenProvider = null)
     {
 #pragma warning disable CA2000 // Dispose objects before losing scope - the handler is owned by the test.
         var httpClient = new HttpClient(handler, disposeHandler: false);
 #pragma warning restore CA2000 // Dispose objects before losing scope
 
-        return new KustoRestIngestor(httpClient, authenticate ? new StaticTokenProvider() : null, ClusterUri, Database, Table, mapping, ingestionType)
+        return new KustoRestIngestor(httpClient, authenticate ? tokenProvider ?? new StaticTokenProvider() : null, ClusterUri, Database, Table, mapping, ingestionType)
         {
             StreamingRetryDelay = TimeSpan.Zero,
         };
@@ -482,7 +612,23 @@ public class KustoRestIngestorTests
 
     private sealed class StaticTokenProvider : IKustoTokenProvider
     {
-        public Task<string?> GetTokenAsync(Uri endpoint, CancellationToken cancellationToken) => Task.FromResult<string?>("test-token");
+        private int version = 1;
+
+        public bool RotateOnInvalidate { get; set; }
+
+        public List<string> InvalidatedTokens { get; } = [];
+
+        public Task<string?> GetTokenAsync(Uri endpoint, CancellationToken cancellationToken)
+            => Task.FromResult<string?>(this.version == 1 ? "test-token" : $"test-token-{this.version}");
+
+        public void InvalidateToken(string token)
+        {
+            this.InvalidatedTokens.Add(token);
+            if (this.RotateOnInvalidate)
+            {
+                this.version++;
+            }
+        }
     }
 
     private sealed class FakeCredential : TokenCredential

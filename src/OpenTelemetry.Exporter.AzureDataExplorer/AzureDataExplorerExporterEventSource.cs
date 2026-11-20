@@ -103,4 +103,12 @@ internal sealed class AzureDataExplorerExporterEventSource : EventSource
     [Event(8, Message = "Streaming ingestion into table '{0}' failed on attempt {1}; retrying: {2}", Level = EventLevel.Warning)]
     public void StreamingIngestionRetrying(string tableName, int attempt, string exception)
         => this.WriteEvent(8, tableName, attempt, exception);
+
+    [Event(9, Message = "{0} was rejected as unauthorized; retrying once with a newly acquired token.", Level = EventLevel.Warning)]
+    public void UnauthorizedRequestRetrying(string operation)
+        => this.WriteEvent(9, operation);
+
+    [Event(10, Message = "Streaming ingestion is unavailable for table '{0}'; using queued ingestion for the next {1} minutes.", Level = EventLevel.Warning)]
+    public void StreamingIngestionSuspended(string tableName, int minutes)
+        => this.WriteEvent(10, tableName, minutes);
 }

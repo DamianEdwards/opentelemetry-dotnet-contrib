@@ -16,4 +16,11 @@ internal interface IKustoTokenProvider
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The access token.</returns>
     Task<string?> GetTokenAsync(Uri endpoint, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Discards <paramref name="token"/> if it is still cached so the next call to
+    /// <see cref="GetTokenAsync"/> acquires a new token from the credential.
+    /// </summary>
+    /// <param name="token">The token that was rejected.</param>
+    void InvalidateToken(string token);
 }

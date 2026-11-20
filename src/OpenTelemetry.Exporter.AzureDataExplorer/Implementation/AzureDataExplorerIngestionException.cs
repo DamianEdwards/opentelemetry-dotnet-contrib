@@ -19,12 +19,14 @@ internal sealed class AzureDataExplorerIngestionException : Exception
         bool isPermanent,
         HttpStatusCode? statusCode = null,
         string? errorCode = null,
-        Exception? innerException = null)
+        Exception? innerException = null,
+        string? failureSubCode = null)
         : base(message, innerException)
     {
         this.IsPermanent = isPermanent;
         this.StatusCode = statusCode;
         this.ErrorCode = errorCode;
+        this.FailureSubCode = failureSubCode;
     }
 
     /// <summary>
@@ -41,6 +43,12 @@ internal sealed class AzureDataExplorerIngestionException : Exception
     /// Gets the Kusto error code (or exception type) of the failed request, if any.
     /// </summary>
     public string? ErrorCode { get; }
+
+    /// <summary>
+    /// Gets the Kusto error <c>code</c> (for example
+    /// <c>BadRequest_StreamingIngestionPolicyNotEnabled</c>) of the failed request, if any.
+    /// </summary>
+    public string? FailureSubCode { get; }
 
     /// <summary>
     /// Determines whether retrying the operation that raised <paramref name="exception"/> cannot succeed.

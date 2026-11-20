@@ -55,6 +55,7 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
     private readonly object sync = new();
     private Task<IngestionResources>? resourcesTask;
     private DateTime resourcesExpiry;
+    private long streamingSuspendedUntilTicks;
     private int disposed;
 
     public KustoRestIngestor(
@@ -81,6 +82,18 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
         this.applicationName = GetApplicationName(isManagedIdentity);
     }
 
+    internal enum StreamingFallback
+    {
+        /// <summary>Do not fall back to queued ingestion.</summary>
+        None,
+
+        /// <summary>Queue this batch.</summary>
+        Queue,
+
+        /// <summary>Queue this batch and stop streaming into the table for a while.</summary>
+        Suspend,
+    }
+
     internal static HttpClient DefaultHttpClient => SharedHttpClient.Value;
 
     internal Uri EngineUri { get; }
@@ -91,6 +104,13 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
     /// Gets or sets the delay before the first streaming retry. It doubles on each retry.
     /// </summary>
     internal TimeSpan StreamingRetryDelay { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Gets or sets how long to use queued ingestion after the cluster reports
+    /// that streaming ingestion is not enabled for the table, matching the
+    /// Kusto SDK's managed streaming ingestion policy.
+    /// </summary>
+    internal TimeSpan StreamingSuspensionPeriod { get; set; } = TimeSpan.FromMinutes(15);
 
     public static KustoRestIngestor Create(AzureDataExplorerExporterOptions options, string tableName, string? jsonMappingReference)
     {
@@ -129,7 +149,7 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
                     this.tableName,
                     $"The payload size ({uncompressedSize.ToString(CultureInfo.InvariantCulture)} bytes) exceeds the streaming ingestion limit.");
             }
-            else if (await this.TryStreamAsync(payload, cancellationToken).ConfigureAwait(false))
+            else if (!this.IsStreamingSuspended() && await this.TryStreamAsync(payload, cancellationToken).ConfigureAwait(false))
             {
                 return;
             }
@@ -221,29 +241,38 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
             ? $"{operation} failed with HTTP {status} ({statusCode})."
             : $"{operation} failed with HTTP {status} ({statusCode}): {detail}";
 
-        return new AzureDataExplorerIngestionException(message, isPermanent, statusCode, error?.Type ?? error?.Code);
+        return new AzureDataExplorerIngestionException(message, isPermanent, statusCode, error?.Type ?? error?.Code, failureSubCode: error?.Code);
     }
 
-    internal static bool ShouldFallBackToQueued(Exception exception)
+    internal static StreamingFallback GetStreamingFallback(Exception exception)
     {
         if (exception is not AzureDataExplorerIngestionException ingestionException)
         {
-            return false;
+            return StreamingFallback.None;
         }
 
-        if (ingestionException.StatusCode == HttpStatusCode.RequestEntityTooLarge)
-        {
-            return true;
-        }
-
-        var text = ingestionException.ErrorCode + " " + ingestionException.Message;
+        var text = ingestionException.FailureSubCode + " " + ingestionException.ErrorCode + " " + ingestionException.Message;
 
         // Streaming ingestion is disabled on the cluster or not enabled on the
-        // database/table, or the request is too large for streaming.
-        return ContainsIgnoreCase(text, "StreamingIngestionPolicyNotEnabled")
-            || ContainsIgnoreCase(text, "StreamingIngestionDisabled")
+        // database/table. Like the Kusto SDK's managed client, stop trying to
+        // stream into the table for a while.
+        if (ContainsIgnoreCase(text, "StreamingIngestionPolicyNotEnabled")
+            || ContainsIgnoreCase(text, "StreamingIngestionDisabled"))
+        {
+            return StreamingFallback.Suspend;
+        }
+
+        // Errors that streaming ingestion cannot handle but queued ingestion can,
+        // matching the Kusto SDK's managed client.
+        var queue = ingestionException.StatusCode == HttpStatusCode.RequestEntityTooLarge
             || ContainsIgnoreCase(text, "StreamingIngestionRequestTooLarge")
-            || ContainsIgnoreCase(text, "StreamingIngestionNotSupported");
+            || ContainsIgnoreCase(text, "StreamingIngestionNotSupported")
+            || ContainsIgnoreCase(text, "StreamingIngestionUpdatePolicyIncompatible")
+            || ContainsIgnoreCase(text, "QuerySchemaDoesNotMatchTableSchema")
+            || ContainsIgnoreCase(text, "FileTooLarge")
+            || ContainsIgnoreCase(text, "InputStreamTooLarge");
+
+        return queue ? StreamingFallback.Queue : StreamingFallback.None;
     }
 
     internal static IngestionResources ParseIngestionResources(KustoV1Table table, string authorizationContext)
@@ -386,6 +415,9 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
     private static string? Truncate(string? value)
         => value == null || value.Length <= 1024 ? value : new StringBuilder(1027).Append(value, 0, 1024).Append("...").ToString();
 
+    private bool IsStreamingSuspended()
+        => DateTime.UtcNow.Ticks < Interlocked.Read(ref this.streamingSuspendedUntilTicks);
+
     private async Task<bool> TryStreamAsync(byte[] payload, CancellationToken cancellationToken)
     {
         var delay = this.StreamingRetryDelay;
@@ -397,9 +429,15 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
                 await this.StreamAsync(payload, cancellationToken).ConfigureAwait(false);
                 return true;
             }
-            catch (Exception ex) when (ShouldFallBackToQueued(ex))
+            catch (Exception ex) when (GetStreamingFallback(ex) != StreamingFallback.None)
             {
                 AzureDataExplorerExporterEventSource.Log.StreamingIngestionFallback(this.tableName, ex);
+                if (GetStreamingFallback(ex) == StreamingFallback.Suspend && this.StreamingSuspensionPeriod > TimeSpan.Zero)
+                {
+                    Interlocked.Exchange(ref this.streamingSuspendedUntilTicks, (DateTime.UtcNow + this.StreamingSuspensionPeriod).Ticks);
+                    AzureDataExplorerExporterEventSource.Log.StreamingIngestionSuspended(this.tableName, (int)this.StreamingSuspensionPeriod.TotalMinutes);
+                }
+
                 return false;
             }
             catch (Exception ex) when (!AzureDataExplorerIngestionException.IsPermanentError(ex) && !cancellationToken.IsCancellationRequested)
@@ -432,14 +470,20 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
             this.EngineUri,
             $"v1/rest/ingest/{Uri.EscapeDataString(this.databaseName)}/{Uri.EscapeDataString(this.tableName)}?{query}");
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, uri)
-        {
-            Content = new ByteArrayContent(payload),
-        };
+        using var response = await this.SendKustoRequestAsync(
+            () =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, uri)
+                {
+                    Content = new ByteArrayContent(payload),
+                };
 
-        request.Content.Headers.ContentEncoding.Add("gzip");
-
-        using var response = await this.SendKustoRequestAsync(request, "KNC.executeStreamingIngest", "Streaming ingestion", cancellationToken).ConfigureAwait(false);
+                request.Content.Headers.ContentEncoding.Add("gzip");
+                return request;
+            },
+            "KNC.executeStreamingIngest",
+            "Streaming ingestion",
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task QueueAsync(byte[] payload, long rawSize, CancellationToken cancellationToken)
@@ -582,6 +626,22 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
 
     private async Task<IngestionResources> FetchIngestionResourcesAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            return await this.FetchIngestionResourcesCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (AzureDataExplorerIngestionException ex) when (ex.IsPermanent)
+        {
+            // The Kusto SDK's queued ingest client wraps failures to retrieve the
+            // ingestion resources and identity token (including 401 and 403
+            // responses from the data management service) in non-permanent
+            // exceptions, so exports keep retrying them.
+            throw new AzureDataExplorerIngestionException(ex.Message, isPermanent: false, ex.StatusCode, ex.ErrorCode, ex, ex.FailureSubCode);
+        }
+    }
+
+    private async Task<IngestionResources> FetchIngestionResourcesCoreAsync(CancellationToken cancellationToken)
+    {
         var resources = await this.ExecuteManagementCommandAsync(".get ingestion resources", cancellationToken).ConfigureAwait(false);
         var identity = await this.ExecuteManagementCommandAsync(".get kusto identity token", cancellationToken).ConfigureAwait(false);
 
@@ -607,14 +667,22 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
             new KustoManagementRequest { Database = ManagementDatabase, Command = command },
             KustoJsonSerializerContext.Default.KustoManagementRequest);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(this.IngestUri, "v1/rest/mgmt"))
-        {
-            Content = new ByteArrayContent(body),
-        };
+        var uri = new Uri(this.IngestUri, "v1/rest/mgmt");
 
-        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+        using var response = await this.SendKustoRequestAsync(
+            () =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, uri)
+                {
+                    Content = new ByteArrayContent(body),
+                };
 
-        using var response = await this.SendKustoRequestAsync(request, "KNC.execute", $"Management command '{command}'", cancellationToken).ConfigureAwait(false);
+                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+                return request;
+            },
+            "KNC.execute",
+            $"Management command '{command}'",
+            cancellationToken).ConfigureAwait(false);
 
         var bytes = await HttpClientHelpers.GetResponseBodyAsByteArrayAsync(MaxResponseLength, response, cancellationToken).ConfigureAwait(false);
         KustoV1Response? result;
@@ -638,23 +706,55 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
                 response.StatusCode);
     }
 
-    private async Task<HttpResponseMessage> SendKustoRequestAsync(HttpRequestMessage request, string clientActivity, string operation, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> SendKustoRequestAsync(Func<HttpRequestMessage> createRequest, string clientActivity, string operation, CancellationToken cancellationToken)
     {
-        if (this.tokenProvider != null)
+        string? token = null;
+        for (var attempt = 1; ; attempt++)
         {
-            var token = await this.tokenProvider.GetTokenAsync(request.RequestUri!, cancellationToken).ConfigureAwait(false);
+            using var request = createRequest();
+
+            if (this.tokenProvider != null && attempt == 1)
+            {
+                token = await this.tokenProvider.GetTokenAsync(request.RequestUri!, cancellationToken).ConfigureAwait(false);
+            }
+
             if (token != null)
             {
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             }
+
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.TryAddWithoutValidation("x-ms-app", this.applicationName);
+            request.Headers.TryAddWithoutValidation("x-ms-client-version", $"Kusto.{ConnectorName}:{ConnectorVersion}");
+            request.Headers.TryAddWithoutValidation("x-ms-client-request-id", $"{clientActivity};{Guid.NewGuid()}");
+
+            var response = await this.httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+            {
+                return response;
+            }
+
+            using (response)
+            {
+                // A cached token may have been revoked or invalidated (for example
+                // after a role assignment change). Discard it and retry once if the
+                // credential issues a different token; otherwise report the failure.
+                if (response.StatusCode == HttpStatusCode.Unauthorized && token != null && attempt == 1)
+                {
+                    this.tokenProvider!.InvalidateToken(token);
+                    var newToken = await this.tokenProvider.GetTokenAsync(request.RequestUri!, cancellationToken).ConfigureAwait(false);
+                    if (newToken != null && !string.Equals(newToken, token, StringComparison.Ordinal))
+                    {
+                        token = newToken;
+                        AzureDataExplorerExporterEventSource.Log.UnauthorizedRequestRetrying(operation);
+                        continue;
+                    }
+                }
+
+                var body = await ReadErrorBodyAsync(response, cancellationToken).ConfigureAwait(false);
+                throw CreateException(operation, response.StatusCode, body);
+            }
         }
-
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.TryAddWithoutValidation("x-ms-app", this.applicationName);
-        request.Headers.TryAddWithoutValidation("x-ms-client-version", $"Kusto.{ConnectorName}:{ConnectorVersion}");
-        request.Headers.TryAddWithoutValidation("x-ms-client-request-id", $"{clientActivity};{Guid.NewGuid()}");
-
-        return await this.SendAsync(request, operation, cancellationToken).ConfigureAwait(false);
     }
 
     private Task<HttpResponseMessage> SendStorageRequestAsync(HttpRequestMessage request, string operation, CancellationToken cancellationToken)

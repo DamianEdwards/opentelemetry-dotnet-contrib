@@ -18,6 +18,10 @@ It is an in-process equivalent of the OpenTelemetry Collector
 and writes rows using the same table schemas, so tables, mappings, update
 policies and queries created for the Collector exporter can be reused.
 
+Data is ingested by calling the Kusto and Azure Storage REST APIs directly with
+`HttpClient`, without a dependency on the Kusto SDK, so the exporter is
+compatible with trimming and native AOT.
+
 ## Installation
 
 ```shell

@@ -47,7 +47,7 @@ internal abstract class AzureDataExplorerExporterBase<T> : BaseExporter<T>
 #pragma warning disable CA2000 // Dispose objects before losing scope - owned and disposed by this exporter.
         this.ingestor = options.IngestorFactory != null
             ? options.IngestorFactory(tableName, jsonMapping)
-            : KustoIngestor.Create(options, tableName, jsonMapping);
+            : KustoRestIngestor.Create(options, tableName, jsonMapping);
 #pragma warning restore CA2000
     }
 
@@ -87,14 +87,8 @@ internal abstract class AzureDataExplorerExporterBase<T> : BaseExporter<T>
         }
     }
 
-    internal static bool IsPermanent(Exception exception) => exception switch
-    {
-        Kusto.Ingest.Exceptions.KustoException kustoIngest => kustoIngest.IsPermanent,
-        Kusto.Data.Exceptions.KustoException kustoData => kustoData.IsPermanent,
-        AggregateException aggregate when aggregate.InnerExceptions.Count == 1 => IsPermanent(aggregate.InnerExceptions[0]),
-        ArgumentException => true,
-        _ => false,
-    };
+    internal static bool IsPermanent(Exception exception)
+        => AzureDataExplorerIngestionException.IsPermanentError(exception);
 
     internal TimeSpan GetRetryDelay(int attempt)
     {

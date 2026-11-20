@@ -689,6 +689,7 @@ jobs:
     needs: detect-changes
     if: |
       contains(needs.detect-changes.outputs.changes, 'dynamic-control')
+      || contains(needs.detect-changes.outputs.changes, 'exporter-azuredataexplorer')
       || contains(needs.detect-changes.outputs.changes, 'exporter-geneva')
       || contains(needs.detect-changes.outputs.changes, 'exporter-onecollector')
       || contains(needs.detect-changes.outputs.changes, 'extensions')

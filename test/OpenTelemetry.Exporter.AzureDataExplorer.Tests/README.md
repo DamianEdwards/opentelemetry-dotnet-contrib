@@ -11,7 +11,7 @@ ingestors to cover serialization, options, retries and lifecycle behavior.
 
 `AzureDataExplorerEmulatorTests` export traces, metrics and logs to the
 [Kusto emulator](https://learn.microsoft.com/azure/data-explorer/kusto-emulator-overview)
-container. They use the real `Kusto.Ingest` managed streaming client and the
+container. They use the exporter's REST streaming ingestion and the
 table definitions from the component
 [README](../../src/OpenTelemetry.Exporter.AzureDataExplorer/README.md#prerequisites).
 They need Docker running Linux containers and are skipped when it is not

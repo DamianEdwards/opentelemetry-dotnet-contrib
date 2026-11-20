@@ -64,9 +64,9 @@ public sealed class KustoEmulatorFixture : ContainerFixture<KustoContainer>, IAs
     }
 
     /// <summary>
-    /// Configures the exporter to ingest into the emulator through <see cref="KustoIngestor"/>
+    /// Configures the exporter to ingest into the emulator through <see cref="KustoRestIngestor"/>
     /// using managed (streaming) ingestion. The emulator does not support queued ingestion
-    /// or Microsoft Entra authentication, so only the client construction differs from production.
+    /// or Microsoft Entra authentication, so the ingestor is created without a token provider.
     /// </summary>
     internal void Configure(AzureDataExplorerExporterOptions options)
     {
@@ -74,9 +74,14 @@ public sealed class KustoEmulatorFixture : ContainerFixture<KustoContainer>, IAs
         options.ManagedIdentityId = "system";
         options.IngestionType = AzureDataExplorerIngestionType.Managed;
         options.RetryOnFailure = false;
-        options.IngestorFactory = (table, mapping) => new KustoIngestor(
-            KustoIngestor.CreateClient(this.ConnectionStringBuilder, options.IngestionType),
-            KustoIngestor.CreateIngestionProperties(options.DatabaseName, table, mapping));
+        options.IngestorFactory = (table, mapping) => new KustoRestIngestor(
+            KustoRestIngestor.DefaultHttpClient,
+            tokenProvider: null,
+            options.ClusterUri,
+            options.DatabaseName,
+            table,
+            mapping,
+            options.IngestionType);
     }
 
     protected override KustoContainer CreateContainer() => new KustoBuilder(this.GetImage()).Build();

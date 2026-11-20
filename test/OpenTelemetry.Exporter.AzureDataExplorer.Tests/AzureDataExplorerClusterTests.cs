@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 using System.Globalization;
+using Kusto.Data;
 using OpenTelemetry.Tests;
 
 namespace OpenTelemetry.Exporter.AzureDataExplorer.Tests;
@@ -40,7 +41,10 @@ public sealed class AzureDataExplorerClusterTests
         ConfigureFromEnvironment(queryOptions);
         queryOptions.ClusterUri = GetEngineUri(queryOptions.ClusterUri!);
 
-        using var client = new KustoTestClient(KustoIngestor.CreateConnectionStringBuilder(queryOptions), queryOptions.DatabaseName);
+        var credential = KustoRestIngestor.CreateCredential(queryOptions, new Uri(KustoTokenProvider.DefaultLoginEndpoint));
+        var kcsb = new KustoConnectionStringBuilder(queryOptions.ClusterUri.OriginalString.TrimEnd('/'))
+            .WithAadAzureTokenCredentialsAuthentication(credential);
+        using var client = new KustoTestClient(kcsb, queryOptions.DatabaseName);
 
         var timeoutMinutes = GetVariable(TimeoutVariable);
         var timeout = TimeSpan.FromMinutes(timeoutMinutes != null ? double.Parse(timeoutMinutes, CultureInfo.InvariantCulture) : 10);

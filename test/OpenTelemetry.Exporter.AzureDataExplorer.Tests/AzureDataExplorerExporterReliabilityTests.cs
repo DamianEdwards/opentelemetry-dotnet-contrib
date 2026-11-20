@@ -23,7 +23,7 @@ public class AzureDataExplorerExporterReliabilityTests
     public void PermanentFailuresAreNotRetried()
     {
         var ingestor = new TestIngestor();
-        ingestor.FailWith(new Kusto.Ingest.Exceptions.StreamingIngestClientPermanentException("bad mapping", null));
+        ingestor.FailWith(new AzureDataExplorerIngestionException("bad mapping", isPermanent: true));
         using var exporter = CreateExporter(ingestor, o => o.RetryInitialInterval = TimeSpan.FromMilliseconds(1));
 
         Assert.Equal(ExportResult.Failure, Export(exporter));
@@ -133,9 +133,9 @@ public class AzureDataExplorerExporterReliabilityTests
     public void IsPermanentClassifiesExceptions()
     {
         Assert.True(AzureDataExplorerTraceExporter.IsPermanent(new ArgumentException("bad")));
-        Assert.True(AzureDataExplorerTraceExporter.IsPermanent(new AggregateException(new Kusto.Ingest.Exceptions.StreamingIngestClientPermanentException("bad", null))));
-        Assert.True(AzureDataExplorerTraceExporter.IsPermanent(new Kusto.Data.Exceptions.KustoBadRequestException("bad", null)));
-        Assert.False(AzureDataExplorerTraceExporter.IsPermanent(new Kusto.Data.Exceptions.KustoRequestThrottledException("throttled", null)));
+        Assert.True(AzureDataExplorerTraceExporter.IsPermanent(new AggregateException(new AzureDataExplorerIngestionException("bad", isPermanent: true))));
+        Assert.True(AzureDataExplorerTraceExporter.IsPermanent(new AzureDataExplorerIngestionException("bad", isPermanent: true)));
+        Assert.False(AzureDataExplorerTraceExporter.IsPermanent(new AzureDataExplorerIngestionException("throttled", isPermanent: false)));
         Assert.False(AzureDataExplorerTraceExporter.IsPermanent(new IOException("transient")));
         Assert.False(AzureDataExplorerTraceExporter.IsPermanent(new AggregateException(new ArgumentException("a"), new ArgumentException("b"))));
     }

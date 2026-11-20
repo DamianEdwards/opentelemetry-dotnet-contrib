@@ -5,9 +5,10 @@
     <Description>An OpenTelemetry .NET exporter that exports traces, metrics and logs to Azure Data Explorer (Kusto).</Description>
     <PackageTags>$(PackageTags);AzureDataExplorer;ADX;Kusto;Fabric</PackageTags>
     <MinVerTagPrefix>Exporter.AzureDataExplorer-</MinVerTagPrefix>
-    <!-- Kusto.Cloud.Platform publicly exposes a polyfill of CallerArgumentExpressionAttribute
-    which conflicts with the one in the linked Guard.cs on older target frameworks. -->
-    <NoWarn>$(NoWarn);CS0436</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$([MSBuild]::GetTargetFrameworkIdentifier(`$(TargetFramework)`))' == '.NETCoreApp'">
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <!-- Do not run Package Baseline Validation as this package has never released a stable version.
@@ -18,7 +19,6 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="Microsoft.Azure.Kusto.Ingest" />
     <PackageReference Include="OpenTelemetry" />
   </ItemGroup>
 
@@ -26,6 +26,7 @@
     <Compile Include="$(RepoRoot)\src\Shared\AssemblyVersionExtensions.cs" Link="Includes\AssemblyVersionExtensions.cs" />
     <Compile Include="$(RepoRoot)\src\Shared\ExceptionExtensions.cs" Link="Includes\ExceptionExtensions.cs" />
     <Compile Include="$(RepoRoot)\src\Shared\Guard.cs" Link="Includes\Guard.cs" />
+    <Compile Include="$(RepoRoot)\src\Shared\HttpClientHelpers.cs" Link="Includes\HttpClientHelpers.cs" />
   </ItemGroup>
 
   <ItemGroup>

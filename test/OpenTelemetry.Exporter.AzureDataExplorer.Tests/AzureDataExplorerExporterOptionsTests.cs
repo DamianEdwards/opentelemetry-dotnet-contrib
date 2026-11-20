@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 using Azure.Identity;
-using Kusto.Data.Common;
-using Kusto.Data.Ingestion;
 
 namespace OpenTelemetry.Exporter.AzureDataExplorer.Tests;
 
@@ -113,84 +111,82 @@ public class AzureDataExplorerExporterOptionsTests
     }
 
     [Fact]
-    public void ConnectionString_ApplicationKey()
+    public void Credential_ApplicationKey()
     {
-        var kcsb = KustoIngestor.CreateConnectionStringBuilder(new AzureDataExplorerExporterOptions
-        {
-            ClusterUri = new Uri("https://mycluster.kusto.windows.net/"),
-            ApplicationId = "app",
-            ApplicationKey = "key",
-            TenantId = "tenant",
-        });
+        var authorityHost = new Uri("https://login.microsoftonline.us/");
+        var credential = KustoRestIngestor.CreateCredential(
+            new AzureDataExplorerExporterOptions
+            {
+                ClusterUri = ClusterUri,
+                ApplicationId = "8a3f0c3d-6fd8-4a52-a6b1-3a5cf53ac1d4",
+                ApplicationKey = "key",
+                TenantId = "72f988bf-86f1-41af-91ab-2d7cd011db47",
+            },
+            authorityHost);
 
-        Assert.Equal("https://mycluster.kusto.windows.net", kcsb.DataSource);
-        Assert.Equal("app", kcsb.ApplicationClientId);
-        Assert.Equal("key", kcsb.ApplicationKey);
-        Assert.Equal("tenant", kcsb.Authority);
-        Assert.True(kcsb.FederatedSecurity);
-        Assert.Contains("isManagedIdentity:{false}", kcsb.ApplicationNameForTracing, StringComparison.Ordinal);
-        Assert.StartsWith("Kusto.OpenTelemetry.Exporter.AzureDataExplorer:", kcsb.ApplicationNameForTracing, StringComparison.Ordinal);
+        Assert.IsType<ClientSecretCredential>(credential);
+        Assert.StartsWith("Kusto.OpenTelemetry.Exporter.AzureDataExplorer:", KustoRestIngestor.GetApplicationName(isManagedIdentity: false), StringComparison.Ordinal);
+        Assert.EndsWith("|isManagedIdentity:{false}", KustoRestIngestor.GetApplicationName(isManagedIdentity: false), StringComparison.Ordinal);
     }
 
     [Theory]
-    [InlineData("system", "system")]
-    [InlineData("8a3f0c3d-6fd8-4a52-a6b1-3a5cf53ac1d4", "8a3f0c3d-6fd8-4a52-a6b1-3a5cf53ac1d4")]
-    public void ConnectionString_ManagedIdentity(string managedIdentityId, string expected)
+    [InlineData("system")]
+    [InlineData("8a3f0c3d-6fd8-4a52-a6b1-3a5cf53ac1d4")]
+    public void Credential_ManagedIdentity(string managedIdentityId)
     {
-        var kcsb = KustoIngestor.CreateConnectionStringBuilder(new AzureDataExplorerExporterOptions
-        {
-            ClusterUri = ClusterUri,
-            ManagedIdentityId = managedIdentityId,
-        });
+        var credential = KustoRestIngestor.CreateCredential(
+            new AzureDataExplorerExporterOptions
+            {
+                ClusterUri = ClusterUri,
+                ManagedIdentityId = managedIdentityId,
+            },
+            new Uri(KustoTokenProvider.DefaultLoginEndpoint));
 
-        Assert.Equal(expected, kcsb.EmbeddedManagedIdentity);
-        Assert.Contains("isManagedIdentity:{true}", kcsb.ApplicationNameForTracing, StringComparison.Ordinal);
+        Assert.IsType<ManagedIdentityCredential>(credential);
+        Assert.EndsWith("|isManagedIdentity:{true}", KustoRestIngestor.GetApplicationName(isManagedIdentity: true), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ConnectionString_TokenCredential()
+    public void Credential_TokenCredentialTakesPrecedence()
     {
-        var kcsb = KustoIngestor.CreateConnectionStringBuilder(new AzureDataExplorerExporterOptions
-        {
-            ClusterUri = ClusterUri,
-            TokenCredential = new DefaultAzureCredential(),
-        });
+        var tokenCredential = new DefaultAzureCredential();
+        var credential = KustoRestIngestor.CreateCredential(
+            new AzureDataExplorerExporterOptions
+            {
+                ClusterUri = ClusterUri,
+                TokenCredential = tokenCredential,
+                UseAzureAuth = true,
+                ManagedIdentityId = "system",
+            },
+            new Uri(KustoTokenProvider.DefaultLoginEndpoint));
 
-        Assert.Contains("DefaultAzureCredential", kcsb.ToString(), StringComparison.Ordinal);
+        Assert.Same(tokenCredential, credential);
     }
 
     [Fact]
-    public void IngestionProperties_UseJsonFormatAndOptionalMapping()
+    public void Credential_UseAzureAuth()
     {
-        var withoutMapping = KustoIngestor.CreateIngestionProperties("db", "table", null);
-        Assert.Equal("db", withoutMapping.DatabaseName);
-        Assert.Equal("table", withoutMapping.TableName);
-        Assert.Equal(DataSourceFormat.json, withoutMapping.Format);
-        Assert.Null(withoutMapping.IngestionMapping?.IngestionMappingReference);
+        var credential = KustoRestIngestor.CreateCredential(
+            new AzureDataExplorerExporterOptions
+            {
+                ClusterUri = ClusterUri,
+                UseAzureAuth = true,
+                ManagedIdentityId = "system",
+            },
+            new Uri(KustoTokenProvider.DefaultLoginEndpoint));
 
-        var withMapping = KustoIngestor.CreateIngestionProperties("db", "table", "my_mapping");
-        Assert.Equal(IngestionMappingKind.Json, withMapping.IngestionMapping.IngestionMappingKind);
-        Assert.Equal("my_mapping", withMapping.IngestionMapping.IngestionMappingReference);
+        Assert.IsType<DefaultAzureCredential>(credential);
     }
 
-    [Fact]
-    public void SourceStream_CanBeDisposedWithoutDisposingExporterBuffer()
+    [Theory]
+    [InlineData("https://mycluster.westus.kusto.windows.net", "https://mycluster.westus.kusto.windows.net/", "https://ingest-mycluster.westus.kusto.windows.net/")]
+    [InlineData("https://ingest-mycluster.westus.kusto.windows.net/", "https://mycluster.westus.kusto.windows.net/", "https://ingest-mycluster.westus.kusto.windows.net/")]
+    [InlineData("https://mycluster.kusto.windows.net/some/path?x=1", "https://mycluster.kusto.windows.net/", "https://ingest-mycluster.kusto.windows.net/")]
+    [InlineData("http://127.0.0.1:8080", "http://127.0.0.1:8080/", "http://127.0.0.1:8080/")]
+    [InlineData("http://localhost:8080", "http://localhost:8080/", "http://localhost:8080/")]
+    public void ClusterUri_DerivesEngineAndIngestEndpoints(string clusterUri, string expectedEngine, string expectedIngest)
     {
-        using var buffer = new MemoryStream();
-        var payload = System.Text.Encoding.UTF8.GetBytes("{\"a\":1}\n");
-        buffer.Write(payload, 0, payload.Length);
-        buffer.Position = 0;
-
-        using (var source = KustoIngestor.CreateSourceStream(buffer))
-        {
-            using var reader = new StreamReader(source);
-            Assert.Equal("{\"a\":1}\n", reader.ReadToEnd());
-        }
-
-        // The managed streaming client disposes the source stream; the exporter's buffer must survive for retries.
-        Assert.True(buffer.CanRead);
-        buffer.Position = 0;
-        using var retry = KustoIngestor.CreateSourceStream(buffer);
-        Assert.Equal(payload.Length, retry.Length);
+        Assert.Equal(new Uri(expectedEngine), KustoRestIngestor.GetEngineUri(new Uri(clusterUri)));
+        Assert.Equal(new Uri(expectedIngest), KustoRestIngestor.GetIngestUri(new Uri(clusterUri)));
     }
 }

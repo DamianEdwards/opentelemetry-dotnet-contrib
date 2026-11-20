@@ -54,6 +54,24 @@ internal sealed class AzureDataExplorerExporterEventSource : EventSource
         }
     }
 
+    [NonEvent]
+    public void StreamingIngestionFallback(string tableName, Exception ex)
+    {
+        if (this.IsEnabled(EventLevel.Warning, EventKeywords.All))
+        {
+            this.StreamingIngestionFallback(tableName, ex.ToInvariantString());
+        }
+    }
+
+    [NonEvent]
+    public void StreamingIngestionRetrying(string tableName, int attempt, Exception ex)
+    {
+        if (this.IsEnabled(EventLevel.Warning, EventKeywords.All))
+        {
+            this.StreamingIngestionRetrying(tableName, attempt, ex.ToInvariantString());
+        }
+    }
+
     [Event(1, Message = "Failed to export {0} to table '{1}': {2}", Level = EventLevel.Error)]
     public void ExportFailed(string signal, string tableName, string exception)
         => this.WriteEvent(1, signal, tableName, exception);
@@ -77,4 +95,12 @@ internal sealed class AzureDataExplorerExporterEventSource : EventSource
     [Event(6, Message = "Failed to dispose ingest client for {0}: {1}", Level = EventLevel.Warning)]
     public void IngestorDisposeFailed(string signal, string exception)
         => this.WriteEvent(6, signal, exception);
+
+    [Event(7, Message = "Streaming ingestion into table '{0}' fell back to queued ingestion: {1}", Level = EventLevel.Warning)]
+    public void StreamingIngestionFallback(string tableName, string reason)
+        => this.WriteEvent(7, tableName, reason);
+
+    [Event(8, Message = "Streaming ingestion into table '{0}' failed on attempt {1}; retrying: {2}", Level = EventLevel.Warning)]
+    public void StreamingIngestionRetrying(string tableName, int attempt, string exception)
+        => this.WriteEvent(8, tableName, attempt, exception);
 }

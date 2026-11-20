@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 using Azure.Core;
+using OpenTelemetry.Internal;
 
 namespace OpenTelemetry.Exporter.AzureDataExplorer;
 
@@ -16,6 +17,7 @@ public class AzureDataExplorerExporterOptions
     internal const string DefaultTracesTableName = "OTELTraces";
 
     private TimeSpan exportTimeout = TimeSpan.FromSeconds(30);
+    private Func<HttpClient> httpClientFactory = DefaultHttpClientFactory;
 
     /// <summary>
     /// Gets or sets the Azure Data Explorer cluster URI, for example
@@ -147,6 +149,37 @@ public class AzureDataExplorerExporterOptions
     public TimeSpan RetryMaxInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// Gets or sets the factory function called to create the <see
+    /// cref="HttpClient"/> instance used to communicate with Azure Data
+    /// Explorer, Azure Storage and the identity endpoints.
+    /// </summary>
+    /// <remarks>
+    /// Notes:
+    /// <list type="bullet">
+    /// <item>The factory is called once for each exporter instance (one per
+    /// signal).</item>
+    /// <item>The exporter does not dispose the returned <see
+    /// cref="HttpClient"/>; its lifetime is owned by the caller.</item>
+    /// <item>The default factory returns a shared <see cref="HttpClient"/>
+    /// that recycles pooled connections periodically so that DNS changes are
+    /// picked up by long-running applications.</item>
+    /// <item>Do not configure the returned client with a <see
+    /// cref="HttpClient.BaseAddress"/>; requests are sent to absolute URIs.
+    /// <see cref="ExportTimeout"/> applies independently of <see
+    /// cref="HttpClient.Timeout"/>.</item>
+    /// </list>
+    /// </remarks>
+    public Func<HttpClient> HttpClientFactory
+    {
+        get => this.httpClientFactory;
+        set
+        {
+            Guard.ThrowIfNull(value);
+            this.httpClientFactory = value;
+        }
+    }
+
+    /// <summary>
     /// Gets or sets a factory (table name, mapping reference) used to create
     /// ingestors. Intended for testing.
     /// </summary>
@@ -223,6 +256,8 @@ public class AzureDataExplorerExporterOptions
             throw new InvalidOperationException("Retry intervals must not be negative.");
         }
     }
+
+    private static HttpClient DefaultHttpClientFactory() => KustoRestIngestor.DefaultHttpClient;
 
     private static bool IsEmpty(string? value) => string.IsNullOrWhiteSpace(value);
 }

@@ -22,6 +22,16 @@ public class AzureDataExplorerExporterOptionsTests
     }
 
     [Fact]
+    public void HttpClientFactory_DefaultsToSharedClientAndRejectsNull()
+    {
+        var options = new AzureDataExplorerExporterOptions();
+
+        Assert.Same(KustoRestIngestor.DefaultHttpClient, options.HttpClientFactory());
+        Assert.Same(options.HttpClientFactory(), new AzureDataExplorerExporterOptions().HttpClientFactory());
+        Assert.Throws<ArgumentNullException>(() => options.HttpClientFactory = null!);
+    }
+
+    [Fact]
     public void Validate_RequiresClusterUri()
     {
         var options = new AzureDataExplorerExporterOptions { UseAzureAuth = true };

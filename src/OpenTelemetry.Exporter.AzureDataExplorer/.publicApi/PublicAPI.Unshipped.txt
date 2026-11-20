@@ -11,6 +11,8 @@ OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerExporterOptions.Databa
 OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerExporterOptions.DatabaseName.set -> void
 OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerExporterOptions.ExportTimeout.get -> System.TimeSpan
 OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerExporterOptions.ExportTimeout.set -> void
+OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerExporterOptions.HttpClientFactory.get -> System.Func<System.Net.Http.HttpClient!>!
+OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerExporterOptions.HttpClientFactory.set -> void
 OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerExporterOptions.IngestionType.get -> OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerIngestionType
 OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerExporterOptions.IngestionType.set -> void
 OpenTelemetry.Exporter.AzureDataExplorer.AzureDataExplorerExporterOptions.LogsTableJsonMapping.get -> string?

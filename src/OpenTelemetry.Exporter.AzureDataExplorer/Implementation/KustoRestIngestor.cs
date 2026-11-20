@@ -114,7 +114,8 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
 
     public static KustoRestIngestor Create(AzureDataExplorerExporterOptions options, string tableName, string? jsonMappingReference)
     {
-        var httpClient = DefaultHttpClient;
+        var httpClient = options.HttpClientFactory()
+            ?? throw new InvalidOperationException("AzureDataExplorerExporterOptions.HttpClientFactory returned null.");
         var isManagedIdentity = !string.IsNullOrWhiteSpace(options.ManagedIdentityId);
 
         return new KustoRestIngestor(
@@ -349,7 +350,11 @@ internal sealed class KustoRestIngestor : IAzureDataExplorerIngestor
         };
 #endif
 
+#if NET
         return new HttpClient(handler, disposeHandler: true);
+#else
+        return new HttpClient(new ConnectionLeaseHandler(handler), disposeHandler: true);
+#endif
     }
 #pragma warning restore CA5399, CA2000
 

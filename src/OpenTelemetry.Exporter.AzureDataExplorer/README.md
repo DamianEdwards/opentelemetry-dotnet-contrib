@@ -129,10 +129,33 @@ builder.Services.AddOpenTelemetry()
 | `RetryOnFailure` | `retry_on_failure.enabled` | `true` | Retry transient failures with exponential backoff. |
 | `RetryInitialInterval` | `retry_on_failure.initial_interval` | 5 seconds | Initial retry delay. |
 | `RetryMaxInterval` | `retry_on_failure.max_interval` | 30 seconds | Maximum retry delay. |
+| `HttpClientFactory` | (none) | Shared client | Factory for the `HttpClient` used for all requests. |
 
 Exactly one authentication method must be configured: the
 `ApplicationId`/`ApplicationKey`/`TenantId` triple, `ManagedIdentityId`,
 `UseAzureAuth` or `TokenCredential`.
+
+Like the Collector exporter, this exporter is configured with a cluster URI
+and a credential. It does not accept Kusto connection strings (for example
+`Data Source=...;Fed=true;...`), and it does not implement the Kusto SDK's own
+authentication modes (such as application certificate, user prompt or
+pre-acquired user/application tokens). For those cases, construct the
+equivalent [Azure.Identity](https://learn.microsoft.com/dotnet/api/overview/azure/identity-readme)
+credential, for example `ClientCertificateCredential` or
+`InteractiveBrowserCredential`, and assign it to `TokenCredential`:
+
+```csharp
+options.ClusterUri = new Uri("https://mycluster.westus.kusto.windows.net");
+options.TokenCredential = new ClientCertificateCredential(tenantId, clientId, certificate);
+```
+
+`HttpClientFactory` is called once for each exporter (one per signal), and the
+exporter does not dispose the returned client. The default shared client
+recycles pooled connections every 5 minutes so that long-running applications
+pick up DNS changes; on .NET Framework this is done by setting
+`ServicePoint.ConnectionLeaseTimeout` for the endpoints the exporter calls.
+When you supply your own client, configure the equivalent behavior yourself
+(for example `SocketsHttpHandler.PooledConnectionLifetime`).
 
 Failures that Kusto reports as permanent (for example a missing table or an
 invalid mapping) are not retried. Authorization failures (HTTP 401/403) on
@@ -176,7 +199,7 @@ The rows written match the Collector exporter:
 * There is no persistent sending queue; the SDK batch processor and periodic
   reader buffer telemetry in memory. Data in these buffers is lost if the
   process terminates before it is exported.
-* `TokenCredential` is an additional authentication option.
+* `TokenCredential` and `HttpClientFactory` are additional options.
 
 ## Troubleshooting
 

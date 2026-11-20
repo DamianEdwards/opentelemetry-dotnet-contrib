@@ -453,6 +453,69 @@ public class KustoRestIngestorTests
         Assert.Equal("https://kusto.kustomfa.windows.net/.default", settings.Scope);
     }
 
+    [Fact]
+    public async Task Create_UsesHttpClientFromFactory()
+    {
+        using var handler = new FakeHandler(request => request.Uri.AbsolutePath.EndsWith("/auth/metadata", StringComparison.Ordinal)
+            ? Respond(HttpStatusCode.NotFound)
+            : Respond(HttpStatusCode.OK));
+        using var httpClient = new HttpClient(handler, disposeHandler: false);
+        var factoryCalls = 0;
+        var options = new AzureDataExplorerExporterOptions
+        {
+            ClusterUri = ClusterUri,
+            TokenCredential = new FakeCredential(),
+            IngestionType = AzureDataExplorerIngestionType.Managed,
+            HttpClientFactory = () =>
+            {
+                factoryCalls++;
+                return httpClient;
+            },
+        };
+
+        using (var ingestor = KustoRestIngestor.Create(options, Table, jsonMappingReference: null))
+        {
+            await IngestAsync(ingestor, Payload);
+        }
+
+        Assert.Equal(1, factoryCalls);
+        Assert.Contains(handler.Requests, IsStreaming);
+
+        // The exporter does not dispose a caller-supplied client.
+        using var request = new HttpRequestMessage(HttpMethod.Get, ClusterUri);
+        using var response = await httpClient.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public void Create_ThrowsWhenHttpClientFactoryReturnsNull()
+    {
+        var options = new AzureDataExplorerExporterOptions
+        {
+            ClusterUri = ClusterUri,
+            TokenCredential = new FakeCredential(),
+            HttpClientFactory = () => null!,
+        };
+
+        Assert.Throws<InvalidOperationException>(() => KustoRestIngestor.Create(options, Table, jsonMappingReference: null));
+    }
+
+#if !NET
+    [Fact]
+    public async Task ConnectionLeaseHandler_SetsServicePointLeaseTimeout()
+    {
+        var uri = new Uri("https://lease-test.kusto.windows.net/v1/rest/ingest/db/table");
+        using var inner = new FakeHandler(_ => Respond(HttpStatusCode.OK));
+        using var httpClient = new HttpClient(new ConnectionLeaseHandler(inner), disposeHandler: true);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, uri);
+        using var response = await httpClient.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            (int)ConnectionLeaseHandler.ConnectionLeaseTimeout.TotalMilliseconds,
+            ServicePointManager.FindServicePoint(uri).ConnectionLeaseTimeout);
+    }
+#endif
+
     private static KustoRestIngestor CreateIngestor(
         FakeHandler handler,
         AzureDataExplorerIngestionType ingestionType,
